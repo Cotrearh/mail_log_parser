@@ -47,6 +47,7 @@ def parse():
 			except:
 				print('Unknown error!')
 
+	f.close()
 	# Письма, которые не получили статусы 'removed' или 'returned to sender'
 	# так же считаем ошибочными, оставляя статус обработки 'unknown'
 	for m in message_ids:
