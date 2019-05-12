@@ -1,91 +1,103 @@
-import re
 import collections
-import unittest
+import re
+
+STATUS_UNKNOWN = 'unknown'
+STATUS_OK = 'ok'
+STATUS_RETURNED_TO_SENDER = 'returned to sender'
+
 
 def parse():
-	f = open('maillog')
-	i = 0
-	message_ids = {}
-	messages_final = []
-	for l in f:
-		# Получаем ID письма при начале SMTP сессии и
-		# сохраняем полученные ID
-		if 'sasl_method=LOGIN' in l and 'sasl_username' in l:
-			message_ids[get_id_from_line(l)] = { 'from': '', 'status': 'unknown' } # статус сообщения по умолчанию - неизвестен
-		elif 'from=' in l and get_id_from_line(l) in message_ids:
-			message_ids[get_id_from_line(l)]['from'] = get_from_adress_from_line(l)
+    file = open('maillog')
+    message_ids = {}
+    messages_final = []
+    for line in file:
+        # Получаем ID письма при начале SMTP сессии и
+        # сохраняем полученные ID
+        message_id = get_id_from_line(line)
+        if 'sasl_method=LOGIN' in line and 'sasl_username' in line:
+            message_ids[message_id] = {'from': '', 'status': STATUS_UNKNOWN}  # статус сообщения по умолчанию неизвестен
+        elif 'from=' in line and message_id in message_ids:
+            message_ids[message_id]['from'] = get_from_adress_from_line(line)
 
-		# Если обработаны все заголовки TO, письмо удаляется из списка
-		# занятых ID (запись в логе <ID>: removed). 
-		if 'removed' in l:
-			try:
-				message_ids[(get_id_from_line(l))]['status'] = 'ok'
-				if message_ids[(get_id_from_line(l))]['from'].strip() != '':
-					messages_final.append((message_ids[(get_id_from_line(l))]['from'],message_ids[(get_id_from_line(l))]['status']))
-				del message_ids[(get_id_from_line(l))]
-			except KeyError:
-				# сообщение с данным ключом ещё не попало в список проверяемых сообщений
-				# однако уже получает статус removed. Возможно открытие SMTP не попало в фрагмент лога
-				pass 
-			except:
-				print('Unknown error!')
-		# Если письмо так и не было отправлено получателю но было возвращено пользователю, то заносим его
-		# в список писем как завершённое с ошибкой и со статусом обработки 'returned to sender'
-		if 'returned to sender' in l:
-			try: 
-				message_ids[(get_id_from_line(l))]['status'] = 'returned to sender'
-				if message_ids[(get_id_from_line(l))]['from'].strip() != '':
-					messages_final.append((message_ids[(get_id_from_line(l))]['from'],message_ids[(get_id_from_line(l))]['status']))
-				del message_ids[(get_id_from_line(l))]
-			except KeyError:
-				# сообщение с данным ключом ещё не попало в список проверяемых сообщений
-				# Возможно открытие SMTP не попало в фрагмент лога
-				# Сохраняем ифнормацию о таких сообщениях со статусом 'returned to sender'
-				ad = get_from_adress_from_line(l)
-				if ad.strip() != '':
-					messages_final.append((ad,'returned to sender'))
-			except:
-				print('Unknown error!')
+        # Если обработаны все заголовки TO, письмо удаляется из списка
+        # занятых ID (запись в логе <ID>: removed). 
+        if 'removed' in line:
+            try:
+                message = message_ids[message_id]
+                message['status'] = STATUS_OK
+                if message['from'].strip() != '':
+                    messages_final.append(
+                        (message['from'], message['status']))
+                del message_ids[message_id]
+            except KeyError:
+                # сообщение с данным ключом ещё не попало в список проверяемых сообщений
+                # однако уже получает статус removed. Возможно открытие SMTP не попало в фрагмент лога
+                pass
+            except:
+                print('Unknown error!')
+        # Если письмо так и не было отправлено получателю но было возвращено пользователю, то заносим его
+        # в список писем как завершённое с ошибкой и со статусом обработки STATUS_RETURNED_TO_SENDER
+        if STATUS_RETURNED_TO_SENDER in line:
+            try:
+                message = message_ids[message_id]
+                message['status'] = STATUS_RETURNED_TO_SENDER
+                if message['from'].strip() != '':
+                    messages_final.append(
+                        (message['from'], message['status']))
+                del message_ids[message_id]
+            except KeyError:
+                # сообщение с данным ключом ещё не попало в список проверяемых сообщений
+                # Возможно открытие SMTP не попало в фрагмент лога
+                # Сохраняем ифнормацию о таких сообщениях со статусом STATUS_RETURNED_TO_SENDER
+                address = get_from_adress_from_line(line)
+                if address.strip() != '':
+                    messages_final.append((address, STATUS_RETURNED_TO_SENDER))
+            except:
+                print('Unknown error!')
 
-	f.close()
-	# Письма, которые не получили статусы 'removed' или 'returned to sender'
-	# так же считаем ошибочными, оставляя статус обработки 'unknown'
-	for m in message_ids:
-		if message_ids[m]['from'].strip() != '':	
-			messages_final.append((message_ids[m]['from'],message_ids[m]['status']))
-		del m
-	# print(messages_final)
-	counter=collections.Counter(messages_final)
-	print(pretty_print_counter(counter))
+    file.close()
+    # Письма, которые не получили статусы 'removed' или STATUS_RETURNED_TO_SENDER
+    # так же считаем ошибочными, оставляя статус обработки STATUS_UNKNOWN
+    for m_id in message_ids:
+        message = message_ids[m_id]
+        if message['from'].strip() != '':
+            messages_final.append((message['from'], message['status']))
+    counter = collections.Counter(messages_final)
+    print(pretty_print_counter(counter))
 
 
 def get_id_from_line(line):
-	return line[line.index(': ') + 2:].strip().split(':')[0]
+    return line[line.index(': ') + 2:].strip().split(':')[0]
+
 
 def get_from_adress_from_line(line):
-	p = re.compile("(?<=from=<).*?(?=>)")
-	result = p.search(line)
-	return result.group() 
+    pattern = re.compile("(?<=from=<).*?(?=>)")
+    result = pattern.search(line)
+    return result.group()
+
 
 def pretty_print_counter(counter):
-	print(counter)
-	listOfTuples = []
-	prettyString = ''
-	for message in counter:
-		listOfTuples.append(('С адреса: ' + message[0], resolve_print_text(message[1]) + str(counter[message]) + ' сообщений.'))
-	sorted_adress_list = sorted(listOfTuples, key=lambda x: x[0])
-	for m in sorted_adress_list:
-		prettyString += (m[0] + m[1]) + '\n'
-	return prettyString.strip()
+    print(counter)
+    list_of_tuples = []
+    pretty_string = ''
+    for message in counter:
+        list_of_tuples.append(
+            ('С адреса: ' + message[0], resolve_print_text(message[1]) + str(counter[message]) + ' сообщений.'))
+    sorted_adress_list = sorted(list_of_tuples, key=lambda x: x[0])
+    for mail in sorted_adress_list:
+        pretty_string += (mail[0] + mail[1]) + '\n'
+    return pretty_string.strip()
+
 
 def resolve_print_text(text):
-	if text == 'ok':
-		return ' успешно отправлено '
-	if text == 'unknown':
-		return ' не отправлено из-за ошибок '
-	if text == 'returned to sender':
-		return ' возвращено отправителю '
+    if text == STATUS_OK:
+        return ' успешно отправлено '
+    if text == STATUS_UNKNOWN:
+        return ' не отправлено из-за ошибок '
+    if text == STATUS_RETURNED_TO_SENDER:
+        return ' возвращено отправителю '
+
 
 if __name__ == "__main__":
-	# unittest.main()
-	parse()
+    # unittest.main()
+    parse()
